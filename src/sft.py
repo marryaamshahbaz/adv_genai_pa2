@@ -168,6 +168,7 @@ def compute_sft_loss(model, tokenizer, prompts, responses, max_length):
     return loss
 
 
+
 def train_sft(
     model,
     tokenizer,
@@ -181,177 +182,226 @@ def train_sft(
     epochs=1,
 ):
     """
-    Train the model using supervised fine-tuning.
+    Train the model using SFT.
 
-    train_data and val_data contain dictionaries with:
-        {"prompt": ..., "response": ...}
-
-    Save the best and final model checkpoints.
+    Saves training/validation losses and the best/final checkpoints.
     """
+
+    import os
+    import json
+    import math
+    from torch.optim import AdamW
+    from torch.utils.data import DataLoader
+    from torch.amp import autocast, GradScaler
+    from torch.nn.utils import clip_grad_norm_
+    from transformers import get_cosine_schedule_with_warmup
 
     device = next(model.parameters()).device
 
-    # AdamW updates the model weights using the gradients.
-    # weight_decay discourages excessively large weights.
+    train_loader = DataLoader(
+        train_data, batch_size=batch_size, shuffle=True
+    )
+    val_loader = DataLoader(
+        val_data, batch_size=batch_size, shuffle=False
+    )
+
     optimizer = AdamW(
         model.parameters(),
         lr=learning_rate,
         weight_decay=0.1
     )
 
-    # DataLoader groups training examples into batches.
-    # shuffle=True changes their order each epoch.
-    train_loader = DataLoader(
-        train_data,
-        batch_size=batch_size,
-        shuffle=True
-    )
-
-    val_loader = DataLoader(
-        val_data,
-        batch_size=batch_size,
-        shuffle=False
-    )
-
-    # One optimizer step happens after accumulation_steps batches.
-    steps_per_epoch = (
-        len(train_loader) + accumulation_steps - 1
-    ) // accumulation_steps
-
+    # One optimizer update happens after accumulation_steps microbatches.
+    steps_per_epoch = math.ceil(len(train_loader) / accumulation_steps)
     total_steps = steps_per_epoch * epochs
-    warmup_steps = int(0.03 * total_steps)
 
-    # Start with a small learning rate, then gradually reduce it.
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=warmup_steps,
+        num_warmup_steps=int(0.03 * total_steps),
         num_training_steps=total_steps
     )
 
-    # GradScaler helps avoid underflow when training with fp16.
+    # A100 supports BF16; use FP16 on GPUs without BF16 support.
     use_cuda = device.type == "cuda"
     use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
     precision = torch.bfloat16 if use_bf16 else torch.float16
 
     scaler = GradScaler("cuda", enabled=use_cuda and not use_bf16)
 
-    best_val_loss = float("inf")
     os.makedirs(output_dir, exist_ok=True)
+    metrics_path = os.path.join(output_dir, "metrics.jsonl")
+
+    best_val_loss = float("inf")
+    global_step = 0
+
+    # Save each training or validation result as one JSON line.
+    def save_metric(metric):
+        with open(metrics_path, "a") as file:
+            file.write(json.dumps(metric) + "\n")
+
+    # Clear previous metrics if this is a new run.
+    open(metrics_path, "w").close()
 
     for epoch in range(epochs):
 
         model.train()
-        optimizer.zero_grad()
 
         total_train_loss = 0.0
+        total_train_tokens = 0
 
-        for step, batch in enumerate(train_loader):
+        train_iterator = iter(train_loader)
 
-            # DataLoader gives lists of prompts and responses.
-            prompts = batch["prompt"]
-            responses = batch["response"]
+        # Each window contains the microbatches for one optimizer update.
+        for start in range(0, len(train_loader), accumulation_steps):
 
-            # Autocast performs suitable operations in lower precision.
-            # This reduces GPU memory usage.
-            with autocast("cuda", dtype=precision, enabled=use_cuda):
-
-                loss = compute_sft_loss(
-                    model, tokenizer, prompts, responses, max_length
-                )
-
-            total_train_loss += loss.item()
-
-            # Divide by the number of microbatches in this
-            # accumulation window so gradients remain averaged.
-            window_start = (step // accumulation_steps) * accumulation_steps
             window_size = min(
                 accumulation_steps,
-                len(train_loader) - window_start
+                len(train_loader) - start
             )
 
-            scaled_loss = loss / window_size
+            window_batches = [
+                next(train_iterator) for _ in range(window_size)
+            ]
 
-            # Backward calculates gradients for all trainable weights.
-            # Gradients accumulate until optimizer.zero_grad() is called.
-            scaler.scale(scaled_loss).backward()
+            # Count response tokens across the entire accumulation window.
+            # We need this count to calculate the correct mean loss.
+            window_tokens = 0
 
-            # Update after enough batches, or at the last batch.
-            should_update = (
-                (step + 1) % accumulation_steps == 0
-                or (step + 1) == len(train_loader)
-            )
+            for batch in window_batches:
+                labels = build_sft_batch(
+                    tokenizer,
+                    batch["prompt"],
+                    batch["response"],
+                    max_length
+                )["labels"]
 
-            if should_update:
+                window_tokens += (labels[:, 1:] != -100).sum().item()
 
-                # Restore gradients to their actual scale before clipping.
-                scaler.unscale_(optimizer)
+            window_loss = 0.0
+            optimizer.zero_grad()
 
-                # Limit the overall gradient norm to 1.0.
-                clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                # Update the model parameters.
-                scaler.step(optimizer)
-                scaler.update()
-
-                scheduler.step()
-                optimizer.zero_grad()
-
-            if (step + 1) % 50 == 0:
-                print(
-                    f"Epoch {epoch + 1}, Batch {step + 1}, "
-                    f"Loss: {loss.item():.4f}"
-                )
-
-        avg_train_loss = total_train_loss / len(train_loader)
-
-        # Validation measures how well the model predicts
-        # responses it was not trained on.
-        model.eval()
-        total_val_loss = 0.0
-        total_val_tokens = 0
-
-        # No gradients are needed during validation.
-        with torch.no_grad():
-
-            for batch in val_loader:
+            for batch in window_batches:
 
                 prompts = batch["prompt"]
                 responses = batch["response"]
 
-                with autocast("cuda", dtype=precision, enabled=use_cuda):
-
-                    loss = compute_sft_loss(
-                        model, tokenizer, prompts, responses, max_length
-                    )
-
-                # Weight each batch by its number of response tokens
-                # so validation loss is averaged fairly.
                 labels = build_sft_batch(
                     tokenizer, prompts, responses, max_length
                 )["labels"]
 
                 token_count = (labels[:, 1:] != -100).sum().item()
 
+                with autocast("cuda", dtype=precision, enabled=use_cuda):
+                    loss = compute_sft_loss(
+                        model, tokenizer, prompts, responses, max_length
+                    )
+
+                # Our SFT loss is averaged over response tokens.
+                #
+                # Multiplying by token_count gives the total token loss.
+                # Dividing by window_tokens averages over all response
+                # tokens in the effective batch, not each microbatch.
+                scaled_loss = loss * (token_count / window_tokens)
+
+                # Accumulate gradients; do not update weights yet.
+                scaler.scale(scaled_loss).backward()
+
+                window_loss += loss.detach().item() * token_count
+
+            # Unscale gradients before applying gradient clipping.
+            scaler.unscale_(optimizer)
+            clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            # Update model weights after all microbatches.
+            old_scale = scaler.get_scale()
+            scaler.step(optimizer)
+            scaler.update()
+
+            # Don't advance the scheduler if an FP16 update was skipped.
+            if not scaler.is_enabled() or scaler.get_scale() >= old_scale:
+                scheduler.step()
+
+            global_step += 1
+            total_train_loss += window_loss
+            total_train_tokens += window_tokens
+
+            # Record the mean loss for this optimizer step.
+            step_loss = window_loss / window_tokens
+
+            save_metric({
+                "type": "train",
+                "epoch": epoch + 1,
+                "step": global_step,
+                "loss": step_loss
+            })
+
+            if global_step % 50 == 0:
+                print(
+                    f"Step {global_step}/{total_steps} "
+                    f"| Loss: {step_loss:.4f}",
+                    flush=True
+                )
+
+        avg_train_loss = total_train_loss / total_train_tokens
+
+        # Validation: measure loss without updating model weights.
+        model.eval()
+
+        total_val_loss = 0.0
+        total_val_tokens = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+
+                prompts = batch["prompt"]
+                responses = batch["response"]
+
+                labels = build_sft_batch(
+                    tokenizer, prompts, responses, max_length
+                )["labels"]
+
+                token_count = (labels[:, 1:] != -100).sum().item()
+
+                with autocast("cuda", dtype=precision, enabled=use_cuda):
+                    loss = compute_sft_loss(
+                        model, tokenizer, prompts, responses, max_length
+                    )
+
                 total_val_loss += loss.item() * token_count
                 total_val_tokens += token_count
 
         avg_val_loss = total_val_loss / total_val_tokens
 
-        print(f"\nEpoch {epoch + 1} finished")
-        print(f"Training loss: {avg_train_loss:.4f}")
+        # Save the end-of-epoch training and validation results.
+        save_metric({
+            "type": "validation",
+            "epoch": epoch + 1,
+            "step": global_step,
+            "train_loss": avg_train_loss,
+            "loss": avg_val_loss
+        })
+
+        print(f"\nEpoch {epoch + 1} completed")
+        print(f"Average training loss: {avg_train_loss:.4f}")
         print(f"Validation loss: {avg_val_loss:.4f}")
 
-        # Save the model that achieves the lowest validation loss.
+        # Save the checkpoint with the lowest validation loss.
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
 
-            model.save_pretrained(os.path.join(output_dir, "best"))
-            tokenizer.save_pretrained(os.path.join(output_dir, "best"))
+            best_path = os.path.join(output_dir, "best")
+            model.save_pretrained(best_path)
+            tokenizer.save_pretrained(best_path)
 
-            print("Saved new best checkpoint.")
+            print("Best checkpoint saved.")
 
-    # Also save the model after the final epoch.
-    model.save_pretrained(os.path.join(output_dir, "final"))
-    tokenizer.save_pretrained(os.path.join(output_dir, "final"))
+    # Save the model after the last training update.
+    final_path = os.path.join(output_dir, "final")
+
+    model.save_pretrained(final_path)
+    tokenizer.save_pretrained(final_path)
 
     print("\nSFT training completed.")
+    print("Metrics:", metrics_path)
+    print("Best checkpoint:", os.path.join(output_dir, "best"))
+    print("Final checkpoint:", final_path)
