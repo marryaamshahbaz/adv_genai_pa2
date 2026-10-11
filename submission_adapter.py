@@ -11,20 +11,24 @@ from __future__ import annotations
 def build_sft_batch(tokenizer, prompts, responses, max_length):
     """Return input_ids, attention_mask, and response-only labels."""
 
-    raise NotImplementedError("Connect this adapter to your SFT batch builder")
+    from src.sft import build_sft_batch as make_batch
 
+    return make_batch(tokenizer, prompts, responses, max_length)
 
 def compute_response_logprobs(model, tokenizer, prompts, responses, max_length):
     """Return one summed response-token log-probability per input row."""
 
-    raise NotImplementedError("Connect this adapter to your log-probability code")
+    from src.sft import compute_response_logprobs as get_logps
+
+    return get_logps(model, tokenizer, prompts, responses, max_length)
 
 
 def compute_sft_loss(model, tokenizer, prompts, responses, max_length):
-    """Return a scalar response-only SFT loss using either documented reduction."""
+    """Return a scalar response-only SFT loss."""
 
-    raise NotImplementedError("Connect this adapter to your SFT loss code")
+    from src.sft import compute_sft_loss as get_sft_loss
 
+    return get_sft_loss(model, tokenizer, prompts, responses, max_length)
 
 def build_dpo_batch(tokenizer, prompts, chosen_responses, rejected_responses, max_length):
     """Return separate response-masked LM batches for chosen and rejected rows."""
