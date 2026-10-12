@@ -13,9 +13,14 @@ MODEL_NAME = "Qwen/Qwen2.5-0.5B"
 DATASET_NAME = "tatsu-lab/alpaca_eval"
 
 
+
 def load_eval_prompts(num_examples, seed):
-    # Load AlpacaEval and randomly select 300 prompts using seed 42.
-    dataset = load_dataset(DATASET_NAME, "alpaca_eval", split="eval")
+    # Load the AlpacaEval examples directly from their JSON file.
+    dataset = load_dataset(
+        "json",
+        data_files="https://huggingface.co/datasets/tatsu-lab/alpaca_eval/resolve/main/alpaca_eval.json",
+        split="train"
+    )
 
     indices = list(range(len(dataset)))
     random.Random(seed).shuffle(indices)
