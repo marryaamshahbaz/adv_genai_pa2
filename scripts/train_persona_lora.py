@@ -94,7 +94,7 @@ def train_persona(args):
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=3,
-        num_train_epochs=2,
+        num_train_epochs=4,
         max_length=512,
         fp16=torch.cuda.is_available(),
         bf16=False,
