@@ -36,6 +36,17 @@ def build_dpo_batch(tokenizer, prompts, chosen_responses, rejected_responses, ma
     raise NotImplementedError("Connect this adapter to your DPO batch builder")
 
 
+
+def build_dpo_batch(tokenizer, prompts, chosen_responses, rejected_responses, max_length):
+    """Return separate response-masked batches for chosen and rejected rows."""
+
+    from src.dpo import build_dpo_batch as make_dpo_batch
+
+    return make_dpo_batch(
+        tokenizer, prompts, chosen_responses, rejected_responses, max_length
+    )
+
+
 def compute_dpo_loss_from_logps(
     policy_chosen_logps,
     policy_rejected_logps,
@@ -43,9 +54,17 @@ def compute_dpo_loss_from_logps(
     reference_rejected_logps,
     beta,
 ):
-    """Return the scalar mean DPO objective from per-example log probabilities."""
+    """Return the mean DPO loss from the four log probability tensors."""
 
-    raise NotImplementedError("Connect this adapter to your tensor-level DPO loss")
+    from src.dpo import compute_dpo_loss_from_logps as get_dpo_loss
+
+    return get_dpo_loss(
+        policy_chosen_logps,
+        policy_rejected_logps,
+        reference_chosen_logps,
+        reference_rejected_logps,
+        beta,
+    )
 
 
 def compute_dpo_loss(
@@ -58,6 +77,18 @@ def compute_dpo_loss(
     beta,
     max_length,
 ):
-    """Return a scalar mean DPO loss with a frozen reference computation."""
+    """Calculate DPO loss using the policy and reference models."""
 
-    raise NotImplementedError("Connect this adapter to your DPO loss code")
+    from src.dpo import compute_dpo_loss as get_dpo_loss
+
+    return get_dpo_loss(
+        policy_model,
+        reference_model,
+        tokenizer,
+        prompts,
+        chosen_responses,
+        rejected_responses,
+        beta,
+        max_length,
+    )
+
