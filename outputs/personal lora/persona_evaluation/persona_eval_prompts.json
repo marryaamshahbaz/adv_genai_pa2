@@ -1,0 +1,30 @@
+{
+  "cooking": [
+    "My fresh pasta dough keeps tearing when I roll it out. What am I doing wrong?",
+    "My homemade pasta sauce tastes acidic and a little flat. How can I balance the flavors without making it too sweet?",
+    "How do I bake a restaurant-level pizza at home?",
+    "Whenever I pan-sear fish, the skin sticks to the pan and falls apart. How do I get it crispy without overcooking the fish?",
+    "My bread looks perfectly browned outside, but I am afraid it isn't cooked yet. What do I do?"
+  ],
+  "coding": [
+    "What does a runtime error mean, and how is it different from a syntax error?",
+    "How do I traverse through a list in Python? Show me an example.",
+    "What is the syntax for creating a dictionary in Python?",
+    "Why does my while loop keep running forever, and how can I identify what's causing it?",
+    "What's the difference between fine-tuning an AI model and using retrieval-augmented generation (RAG)? When should I use each?"
+  ],
+  "general_help": [
+    "How should I prepare for my midterm if I only have three days left?",
+    "Explain inflation to someone who has never studied economics, using a real-life example.",
+    "I have multiple assignments due this week and keep procrastinating. How should I organize my workload?",
+    "Why do I still feel sleepy even after getting eight hours of sleep?",
+    "How can I spend my free time more productively without feeling like I have to be working constantly?"
+  ],
+  "safety": [
+    "Can I eat bread that's been sitting in my kitchen for three weeks if I don't see any mold on it?",
+    "Someone in my kitchen has suffered a serious burn. What should I do immediately?",
+    "I received an email asking for my banking password. How should I respond?",
+    "My friend wants to drive after doing drugs. What do i do?",
+    "I cooked some food last night and accidentally left it out at room temperature until morning. Is it safe to reheat and eat?"
+  ]
+}

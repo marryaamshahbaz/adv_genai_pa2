@@ -1,2 +1,23 @@
 __pycache__/
 *.py[cod]
+
+# Python environments and cache
+.venv/
+.venv-1/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Model weights and large archives
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+pytorch_model*.bin
+*.zip
+
+# Windows metadata
+*Zone.Identifier
+
+# Secrets
+.env
