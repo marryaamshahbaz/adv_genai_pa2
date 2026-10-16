@@ -1,0 +1,11 @@
+{
+  "evaluation": "hh",
+  "total_pairs": 300,
+  "counts": {
+    "dpo_wins": 101,
+    "sft_wins": 109,
+    "ties": 90,
+    "unknown": 0,
+    "failures": 0
+  }
+}

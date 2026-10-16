@@ -1,0 +1,11 @@
+{
+  "evaluation": "alpaca",
+  "total_pairs": 300,
+  "counts": {
+    "dpo_wins": 101,
+    "sft_wins": 125,
+    "ties": 69,
+    "unknown": 0,
+    "failures": 5
+  }
+}
